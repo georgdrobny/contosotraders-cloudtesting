@@ -477,3 +477,733 @@ resource cartsdba 'Microsoft.DocumentDB/databaseAccounts@2022-08-15' = {
   }
 }
 
+//
+// products api
+//
+
+// app service plan (linux)
+resource productsapiappsvcplan 'Microsoft.Web/serverfarms@2022-03-01' = {
+  name: productsApiAppSvcPlanName
+  location: resourceLocation
+  tags: resourceTags
+  sku: {
+    name: 'B1'
+  }
+  properties: {
+    reserved: true
+  }
+  kind: 'linux'
+}
+
+// app service
+resource productsapiappsvc 'Microsoft.Web/sites@2022-03-01' = {
+  name: productsApiAppSvcName
+  location: resourceLocation
+  tags: resourceTags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userassignedmiforkvaccess.id}': {}
+    }
+  }
+  properties: {
+    clientAffinityEnabled: false
+    httpsOnly: true
+    serverFarmId: productsapiappsvcplan.id
+    siteConfig: {
+      linuxFxVersion: 'DOTNETCORE|7.0'
+      alwaysOn: true
+      appSettings: [
+        {
+          name: productsApiSettingNameKeyVaultEndpoint
+          value: kv.properties.vaultUri
+        }
+        {
+          name: productsApiSettingNameManagedIdentityClientId
+          value: userassignedmiforkvaccess.properties.clientId
+        }
+      ]
+    }
+  }
+}
+
+//
+// products db
+//
+
+// sql azure server
+resource productsdbsrv 'Microsoft.Sql/servers@2022-05-01-preview' = {
+  name: productsDbServerName
+  location: resourceLocation
+  tags: resourceTags
+  properties: {
+    administratorLogin: productsDbServerAdminLogin
+    administratorLoginPassword: productsDbServerAdminPassword
+    publicNetworkAccess: 'Enabled'
+  }
+
+  // sql azure database
+  resource productsdbsrv_db 'databases' = {
+    name: productsDbName
+    location: resourceLocation
+    tags: resourceTags
+    sku: {
+      capacity: 5
+      tier: 'Basic'
+      name: 'Basic'
+    }
+  }
+
+  // sql azure firewall rule (allow access from all azure resources/services)
+  resource productsdbsrv_db_fwlallowazureresources 'firewallRules' = {
+    name: 'AllowAllWindowsAzureIps'
+    properties: {
+      endIpAddress: '0.0.0.0'
+      startIpAddress: '0.0.0.0'
+    }
+  }
+
+  // @TODO: Hack to enable temporary access to devs during local development/debugging.
+  resource productsdbsrv_db_fwllocaldev 'firewallRules' = {
+    name: 'AllowLocalDevelopment'
+    properties: {
+      endIpAddress: '255.255.255.255'
+      startIpAddress: '0.0.0.0'
+    }
+  }
+}
+
+//
+// profiles db
+//
+
+// sql azure server
+resource profilesdbsrv 'Microsoft.Sql/servers@2022-05-01-preview' = {
+  name: profilesDbServerName
+  location: resourceLocation
+  tags: resourceTags
+  properties: {
+    administratorLogin: profilesDbServerAdminLogin
+    administratorLoginPassword: profilesDbServerAdminPassword
+    publicNetworkAccess: 'Enabled'
+  }
+
+  // sql azure database
+  resource profilesdbsrv_db 'databases' = {
+    name: profilesDbName
+    location: resourceLocation
+    tags: resourceTags
+    sku: {
+      capacity: 5
+      tier: 'Basic'
+      name: 'Basic'
+    }
+  }
+
+  // sql azure firewall rule (allow access from all azure resources/services)
+  resource profilesdbsrv_db_fwl 'firewallRules' = {
+    name: 'AllowAllWindowsAzureIps'
+    properties: {
+      endIpAddress: '0.0.0.0'
+      startIpAddress: '0.0.0.0'
+    }
+  }
+}
+
+//
+// carts api
+//
+
+// aca environment
+resource cartsapiacaenv 'Microsoft.App/managedEnvironments@2022-06-01-preview' = {
+  name: cartsApiAcaEnvName
+  location: resourceLocation
+  tags: resourceTags
+  sku: {
+    name: 'Consumption'
+  }
+  properties: {
+    zoneRedundant: false
+  }
+}
+
+// aca
+resource cartsapiaca 'Microsoft.App/containerApps@2022-06-01-preview' = {
+  name: cartsApiAcaName
+  location: resourceLocation
+  tags: resourceTags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userassignedmiforkvaccess.id}': {}
+    }
+  }
+  properties: {
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        allowInsecure: false
+        targetPort: 80
+        traffic: [
+          {
+            latestRevision: true
+            weight: 100
+          }
+        ]
+      }
+      registries: [
+        {
+          passwordSecretRef: cartsApiAcaSecretAcrPassword
+          server: acr.properties.loginServer
+          username: acr.name
+        }
+      ]
+      secrets: [
+        {
+          name: cartsApiAcaSecretAcrPassword
+          value: acr.listCredentials().passwords[0].value
+        }
+      ]
+    }
+    environmentId: cartsapiacaenv.id
+    template: {
+      scale: {
+        minReplicas: 1
+        maxReplicas: 10
+        rules: [
+          {
+            name: 'http-scaling-rule'
+            http: {
+              metadata: {
+                concurrentRequests: '3'
+              }
+            }
+          }
+        ]
+      }
+      containers: [
+        {
+          env: [
+            {
+              name: cartsApiSettingNameKeyVaultEndpoint
+              value: kv.properties.vaultUri
+            }
+            {
+              name: cartsApiSettingNameManagedIdentityClientId
+              value: userassignedmiforkvaccess.properties.clientId
+            }
+          ]
+          // using a public image initially because no images have been pushed to our private ACR yet
+          // at this point. At a later point, our github workflow will update the ACA app to use the 
+          // images from our private ACR.
+          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          name: cartsApiAcaContainerDetailsName
+          resources: {
+            cpu: json('0.5')
+            memory: '1.0Gi'
+          }
+        }
+      ]
+    }
+  }
+}
+
+//
+// product images
+//
+
+// storage account (product images)
+resource productimagesstgacc 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: productImagesStgAccName
+  location: resourceLocation
+  tags: resourceTags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    allowBlobPublicAccess: true
+  }
+  // blob service
+  resource productimagesstgacc_blobsvc 'blobServices' = {
+    name: 'default'
+
+    // container
+    resource productimagesstgacc_blobsvc_productdetailscontainer 'containers' = {
+      name: productImagesProductDetailsContainerName
+      properties: {
+        publicAccess: 'Container'
+      }
+    }
+
+    // container
+    resource productimagesstgacc_blobsvc_productlistcontainer 'containers' = {
+      name: productImagesProductListContainerName
+      properties: {
+        publicAccess: 'Container'
+      }
+    }
+  }
+}
+
+//
+// main website / ui
+// new website / ui
+//
+
+// storage account (main website)
+resource uistgacc 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: uiStgAccName
+  location: resourceLocation
+  tags: resourceTags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    allowBlobPublicAccess: true
+  }
+  // blob service
+  resource uistgacc_blobsvc 'blobServices' = {
+    name: 'default'
+  }
+}
+
+resource uistgacc_mi 'Microsoft.ManagedIdentity/userAssignedIdentities@2022-01-31-preview' = {
+  name: 'DeploymentScript'
+  location: resourceLocation
+  tags: resourceTags
+}
+
+resource uistgacc_roledefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+  scope: subscription()
+  // This is the Storage Account Contributor role, which is the minimum role permission we can give. 
+  // See https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#:~:text=17d1049b-9a84-46fb-8f53-869881c3d3ab
+  name: '17d1049b-9a84-46fb-8f53-869881c3d3ab'
+}
+
+// This requires the service principal to be in 'owner' role or a custom role with 'Microsoft.Authorization/roleAssignments/write' permissions.
+// Details: https://learn.microsoft.com/en-us/answers/questions/287573/authorization-failed-when-when-writing-a-roleassig.html
+resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: uistgacc
+  name: guid(resourceGroup().id, uistgacc_mi.id, uistgacc_roledefinition.id)
+  properties: {
+    roleDefinitionId: uistgacc_roledefinition.id
+    principalId: uistgacc_mi.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource deploymentScript 'Microsoft.Resources/deploymentScripts@2020-10-01' = {
+  name: 'DeploymentScript'
+  location: resourceLocation
+  kind: 'AzurePowerShell'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${uistgacc_mi.id}': {}
+    }
+  }
+  dependsOn: [
+    // we need to ensure we wait for the role assignment to be deployed before trying to access the storage account
+    roleAssignment
+  ]
+  properties: {
+    azPowerShellVersion: '3.0'
+    scriptContent: loadTextContent('./scripts/enable-static-website.ps1')
+    retentionInterval: 'PT4H'
+    environmentVariables: [
+      {
+        name: 'ResourceGroupName'
+        value: resourceGroup().name
+      }
+      {
+        name: 'StorageAccountName'
+        value: uistgacc.name
+      }
+    ]
+  }
+}
+
+// storage account (new website)
+resource ui2stgacc 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: ui2StgAccName
+  location: resourceLocation
+  tags: resourceTags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    allowBlobPublicAccess: true
+  }
+
+  // blob service
+  resource ui2stgacc_blobsvc 'blobServices' = {
+    name: 'default'
+  }
+}
+
+resource ui2stgacc_mi 'Microsoft.ManagedIdentity/userAssignedIdentities@2022-01-31-preview' = {
+  name: 'DeploymentScript2'
+  location: resourceLocation
+  tags: resourceTags
+}
+
+resource ui2stgacc_roledefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
+  scope: subscription()
+  // This is the Storage Account Contributor role, which is the minimum role permission we can give. 
+  // See https://docs.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#:~:text=17d1049b-9a84-46fb-8f53-869881c3d3ab
+  name: '17d1049b-9a84-46fb-8f53-869881c3d3ab'
+}
+
+// This requires the service principal to be in 'owner' role or a custom role with 'Microsoft.Authorization/roleAssignments/write' permissions.
+// Details: https://learn.microsoft.com/en-us/answers/questions/287573/authorization-failed-when-when-writing-a-roleassig.html
+resource roleAssignment2 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: ui2stgacc
+  name: guid(resourceGroup().id, ui2stgacc_mi.id, ui2stgacc_roledefinition.id)
+  properties: {
+    roleDefinitionId: ui2stgacc_roledefinition.id
+    principalId: ui2stgacc_mi.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource deploymentScript2 'Microsoft.Resources/deploymentScripts@2020-10-01' = {
+  name: 'DeploymentScript2'
+  location: resourceLocation
+  kind: 'AzurePowerShell'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${ui2stgacc_mi.id}': {}
+    }
+  }
+  dependsOn: [
+    // we need to ensure we wait for the role assignment to be deployed before trying to access the storage account
+    roleAssignment
+  ]
+  properties: {
+    azPowerShellVersion: '3.0'
+    scriptContent: loadTextContent('./scripts/enable-static-website.ps1')
+    retentionInterval: 'PT4H'
+    environmentVariables: [
+      {
+        name: 'ResourceGroupName'
+        value: resourceGroup().name
+      }
+      {
+        name: 'StorageAccountName'
+        value: ui2stgacc.name
+      }
+    ]
+  }
+}
+
+//
+// image classifier
+//
+
+// storage account (main website)
+resource imageclassifierstgacc 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: imageClassifierStgAccName
+  location: resourceLocation
+  tags: resourceTags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    allowBlobPublicAccess: true
+  }
+
+  // blob service
+  resource imageclassifierstgacc_blobsvc 'blobServices' = {
+    name: 'default'
+
+    // container
+    resource uistgacc_blobsvc_websiteuploadscontainer 'containers' = {
+      name: imageClassifierWebsiteUploadsContainerName
+      properties: {
+        publicAccess: 'Container'
+      }
+    }
+  }
+}
+
+//
+// cdn
+//
+
+resource cdnprofile 'Microsoft.Cdn/profiles@2022-11-01-preview' = {
+  name: cdnProfileName
+  location: 'global'
+  tags: resourceTags
+  sku: {
+    name: 'Standard_Microsoft'
+  }
+}
+
+// endpoint (product images)
+resource cdnprofile_imagesendpoint 'Microsoft.Cdn/profiles/endpoints@2022-11-01-preview' = {
+  name: cdnImagesEndpointName
+  location: 'global'
+  tags: resourceTags
+  parent: cdnprofile
+  properties: {
+    isCompressionEnabled: true
+    contentTypesToCompress: [
+      'image/svg+xml'
+    ]
+    deliveryPolicy: {
+      rules: [
+        {
+          name: 'Global'
+          order: 0
+          actions: [
+            {
+              name: 'CacheExpiration'
+              parameters: {
+                typeName: 'DeliveryRuleCacheExpirationActionParameters'
+                cacheBehavior: 'SetIfMissing'
+                cacheType: 'All'
+                cacheDuration: '10:00:00'
+              }
+            }
+          ]
+        }
+      ]
+    }
+    originHostHeader: replace(replace(productimagesstgacc.properties.primaryEndpoints.blob, 'https://', ''), '/', '')
+    origins: [
+      {
+        name: replace(
+          replace(replace(productimagesstgacc.properties.primaryEndpoints.blob, 'https://', ''), '/', ''),
+          '.',
+          '-'
+        )
+        properties: {
+          hostName: replace(replace(productimagesstgacc.properties.primaryEndpoints.blob, 'https://', ''), '/', '')
+          originHostHeader: replace(
+            replace(productimagesstgacc.properties.primaryEndpoints.blob, 'https://', ''),
+            '/',
+            ''
+          )
+        }
+      }
+    ]
+  }
+}
+
+// endpoint (ui / old website)
+resource cdnprofile_uiendpoint 'Microsoft.Cdn/profiles/endpoints@2022-11-01-preview' = {
+  name: cdnUiEndpointName
+  location: 'global'
+  tags: resourceTags
+  parent: cdnprofile
+  properties: {
+    isCompressionEnabled: true
+    contentTypesToCompress: [
+      'application/eot'
+      'application/font'
+      'application/font-sfnt'
+      'application/javascript'
+      'application/json'
+      'application/opentype'
+      'application/otf'
+      'application/pkcs7-mime'
+      'application/truetype'
+      'application/ttf'
+      'application/vnd.ms-fontobject'
+      'application/xhtml+xml'
+      'application/xml'
+      'application/xml+rss'
+      'application/x-font-opentype'
+      'application/x-font-truetype'
+      'application/x-font-ttf'
+      'application/x-httpd-cgi'
+      'application/x-javascript'
+      'application/x-mpegurl'
+      'application/x-opentype'
+      'application/x-otf'
+      'application/x-perl'
+      'application/x-ttf'
+      'font/eot'
+      'font/ttf'
+      'font/otf'
+      'font/opentype'
+      'image/svg+xml'
+      'text/css'
+      'text/csv'
+      'text/html'
+      'text/javascript'
+      'text/js'
+      'text/plain'
+      'text/richtext'
+      'text/tab-separated-values'
+      'text/xml'
+      'text/x-script'
+      'text/x-component'
+      'text/x-java-source'
+    ]
+    deliveryPolicy: {
+      rules: [
+        {
+          name: 'Global'
+          order: 0
+          actions: [
+            {
+              name: 'CacheExpiration'
+              parameters: {
+                typeName: 'DeliveryRuleCacheExpirationActionParameters'
+                cacheBehavior: 'SetIfMissing'
+                cacheType: 'All'
+                cacheDuration: '10:00:00'
+              }
+            }
+          ]
+        }
+      ]
+    }
+    originHostHeader: replace(replace(uistgacc.properties.primaryEndpoints.web, 'https://', ''), '/', '')
+    origins: [
+      {
+        name: replace(replace(replace(uistgacc.properties.primaryEndpoints.web, 'https://', ''), '/', ''), '.', '-')
+        properties: {
+          hostName: replace(replace(uistgacc.properties.primaryEndpoints.web, 'https://', ''), '/', '')
+          originHostHeader: replace(replace(uistgacc.properties.primaryEndpoints.web, 'https://', ''), '/', '')
+        }
+      }
+    ]
+  }
+}
+
+// endpoint (ui / new website)
+resource cdnprofile_ui2endpoint 'Microsoft.Cdn/profiles/endpoints@2022-11-01-preview' = {
+  name: cdnUi2EndpointName
+  location: 'global'
+  tags: resourceTags
+  parent: cdnprofile
+  properties: {
+    isCompressionEnabled: true
+    contentTypesToCompress: [
+      'application/eot'
+      'application/font'
+      'application/font-sfnt'
+      'application/javascript'
+      'application/json'
+      'application/opentype'
+      'application/otf'
+      'application/pkcs7-mime'
+      'application/truetype'
+      'application/ttf'
+      'application/vnd.ms-fontobject'
+      'application/xhtml+xml'
+      'application/xml'
+      'application/xml+rss'
+      'application/x-font-opentype'
+      'application/x-font-truetype'
+      'application/x-font-ttf'
+      'application/x-httpd-cgi'
+      'application/x-javascript'
+      'application/x-mpegurl'
+      'application/x-opentype'
+      'application/x-otf'
+      'application/x-perl'
+      'application/x-ttf'
+      'font/eot'
+      'font/ttf'
+      'font/otf'
+      'font/opentype'
+      'image/svg+xml'
+      'text/css'
+      'text/csv'
+      'text/html'
+      'text/javascript'
+      'text/js'
+      'text/plain'
+      'text/richtext'
+      'text/tab-separated-values'
+      'text/xml'
+      'text/x-script'
+      'text/x-component'
+      'text/x-java-source'
+    ]
+    deliveryPolicy: {
+      rules: [
+        {
+          name: 'Global'
+          order: 0
+          actions: [
+            {
+              name: 'CacheExpiration'
+              parameters: {
+                typeName: 'DeliveryRuleCacheExpirationActionParameters'
+                cacheBehavior: 'SetIfMissing'
+                cacheType: 'All'
+                cacheDuration: '02:00:00'
+              }
+            }
+          ]
+        }
+        {
+          name: 'EnforceHttps'
+          order: 1
+          conditions: [
+            {
+              name: 'RequestScheme'
+              parameters: {
+                typeName: 'DeliveryRuleRequestSchemeConditionParameters'
+                matchValues: [
+                  'HTTP'
+                ]
+                operator: 'Equal'
+                negateCondition: false
+                transforms: []
+              }
+            }
+          ]
+          actions: [
+            {
+              name: 'UrlRedirect'
+              parameters: {
+                typeName: 'DeliveryRuleUrlRedirectActionParameters'
+                redirectType: 'Found'
+                destinationProtocol: 'Https'
+              }
+            }
+          ]
+        }
+      ]
+    }
+    originHostHeader: replace(replace(ui2stgacc.properties.primaryEndpoints.web, 'https://', ''), '/', '')
+    origins: [
+      {
+        name: replace(replace(replace(ui2stgacc.properties.primaryEndpoints.web, 'https://', ''), '/', ''), '.', '-')
+        properties: {
+          hostName: replace(replace(ui2stgacc.properties.primaryEndpoints.web, 'https://', ''), '/', '')
+          originHostHeader: replace(replace(ui2stgacc.properties.primaryEndpoints.web, 'https://', ''), '/', '')
+        }
+      }
+    ]
+  }
+}
+
+//
+// container registry
+//
+
+resource acr 'Microsoft.ContainerRegistry/registries@2022-02-01-preview' = {
+  name: acrName
+  location: resourceLocation
+  tags: resourceTags
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: true
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
