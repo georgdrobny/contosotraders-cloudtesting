@@ -369,3 +369,111 @@ resource userassignedmiforkvaccess 'Microsoft.ManagedIdentity/userAssignedIdenti
   tags: resourceTags
 }
 
+//
+// stocks db
+//
+
+// cosmos db account
+resource stocksdba 'Microsoft.DocumentDB/databaseAccounts@2022-08-15' = {
+  name: stocksDbAcctName
+  location: resourceLocation
+  tags: resourceTags
+  properties: {
+    databaseAccountOfferType: 'Standard'
+    enableFreeTier: false
+    capabilities: [
+      {
+        name: 'EnableServerless'
+      }
+    ]
+    locations: [
+      {
+        locationName: resourceLocation
+      }
+    ]
+  }
+
+  // cosmos db database
+  resource stocksdba_db 'sqlDatabases' = {
+    name: stocksDbName
+    location: resourceLocation
+    tags: resourceTags
+    properties: {
+      resource: {
+        id: stocksDbName
+      }
+    }
+
+    // cosmos db collection
+    resource stocksdba_db_c1 'containers' = {
+      name: stocksDbStocksContainerName
+      location: resourceLocation
+      tags: resourceTags
+      properties: {
+        resource: {
+          id: stocksDbStocksContainerName
+          partitionKey: {
+            paths: [
+              '/id'
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+
+//
+// carts db
+//
+
+// cosmos db account
+resource cartsdba 'Microsoft.DocumentDB/databaseAccounts@2022-08-15' = {
+  name: cartsDbAcctName
+  location: resourceLocation
+  tags: resourceTags
+  properties: {
+    databaseAccountOfferType: 'Standard'
+    enableFreeTier: false
+    capabilities: [
+      {
+        name: 'EnableServerless'
+      }
+    ]
+    locations: [
+      {
+        locationName: resourceLocation
+      }
+    ]
+  }
+
+  // cosmos db database
+  resource cartsdba_db 'sqlDatabases' = {
+    name: cartsDbName
+    location: resourceLocation
+    tags: resourceTags
+    properties: {
+      resource: {
+        id: cartsDbName
+      }
+    }
+
+    // cosmos db collection
+    resource cartsdba_db_c1 'containers' = {
+      name: cartsDbStocksContainerName
+      location: resourceLocation
+      tags: resourceTags
+      properties: {
+        resource: {
+          id: cartsDbStocksContainerName
+          partitionKey: {
+            paths: [
+              '/Email'
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+
