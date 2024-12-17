@@ -21,6 +21,7 @@ param suffix string
   'eastus2'
   'japaneast'
   'northcentralus'
+  'norwayeast'
   'swedencentral'
   'uksouth'
   'westcentralus'
