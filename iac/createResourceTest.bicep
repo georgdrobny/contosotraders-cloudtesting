@@ -257,7 +257,7 @@ resource kv 'Microsoft.KeyVault/vaults@2022-07-01' = {
       value: cartsapiaca.properties.configuration.ingress.fqdn
     }
   }
-
+/*
   // secret
   resource kv_secretCartsInternalApiEndpoint 'secrets' =
     if (deployPrivateEndpoints) {
@@ -345,7 +345,7 @@ resource kv 'Microsoft.KeyVault/vaults@2022-07-01' = {
     }
   }
 }
-
+*/
 resource kv_roledefinitionforchaosexp 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
   scope: kv
   // This is the Key Vault Contributor role
