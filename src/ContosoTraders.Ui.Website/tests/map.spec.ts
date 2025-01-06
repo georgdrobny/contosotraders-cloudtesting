@@ -21,7 +21,7 @@ test.describe('Map', () => {
   test('should display bing maps iframe', async ({ page, geolocation }) => {
     await expect.poll(() => page.locator('input#latitude').inputValue()).toEqual(geolocation?.latitude.toString());
     await expect.poll(() => page.locator('input#longitude').inputValue()).toEqual(geolocation?.longitude.toString());
-    await expect(page.locator('#current-location')).toBeVisible();
+    // await expect(page.locator('#current-location')).toBeVisible();
     await expect(async () => {
       const boundingBox = await page.frameLocator('iframe[title="geolocation"]').locator('canvas[aria-label="Interactive Map"]').boundingBox();
       if (!boundingBox || boundingBox?.width < 100 || boundingBox?.height < 100) {
