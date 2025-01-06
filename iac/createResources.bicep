@@ -1742,7 +1742,7 @@ resource chaosaksexperiment 'Microsoft.Chaos/experiments@2022-10-01-preview' = {
                 parameters: [
                   {
                     key: 'jsonSpec'
-                    value: '{\'action\':\'pod-failure\',\'mode\':\'all\',\'duration\':\'3s\',\'selector\':{\'namespaces\':[\'default\'],\'labelSelectors\':{\'app\':\'contoso-traders-products\'}}}'
+                    value: "{\"action\":\"pod-failure\",\"mode\":\"all\",\"duration\":\"3s\",\"selector\":{\"namespaces\":[\"default\"],\"labelSelectors\":{\"app\":\"contoso-traders-products\"}}}"
                   }
                 ]
               }
